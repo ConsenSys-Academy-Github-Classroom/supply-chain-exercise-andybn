@@ -22,8 +22,8 @@ contract SupplyChain {
     // <struct Item: name, sku, price, state, seller, and buyer>
     struct Item {
         string name;
-        uint256 sku;
-        uint256 price;
+        uint sku;
+        uint price;
         State state;
         address payable seller;
         address payable buyer;
@@ -76,7 +76,8 @@ contract SupplyChain {
         _;
         uint256 _price = items[_sku].price;
         uint256 amountToRefund = msg.value - _price;
-        items[_sku].buyer.transfer(amountToRefund);
+        (bool success, ) = items[_sku].buyer.call.value(amountToRefund)("");
+        require(success);
     }
 
     // For each of the following modifiers, use what you learned about modifiers
@@ -88,7 +89,7 @@ contract SupplyChain {
     // an Item has been added?
 
     // modifier forSale
-    modifier forSale(uint256 _sku) {
+    modifier forSale(uint _sku) {
         require(items[_sku].state == State.ForSale && items[_sku].price > 0);
         _;
     }
@@ -120,25 +121,29 @@ contract SupplyChain {
 
     function addItem(string memory _name, uint256 _price)
         public
+        isValidPrice(_price)
         returns (bool)
     {
         // 1. Create a new item and put in array
+
+        // Addresses converted to payable
+        items[skuCount] = Item({
+            name: _name,
+            sku: skuCount,
+            price: _price,
+            state: State.ForSale,
+            seller: msg.sender,
+            buyer: address(0)
+        });
+
         // 2. Increment the skuCount by one
+        skuCount = skuCount + 1;
+
         // 3. Emit the appropriate event
+        emit LogForSale(skuCount);
+
         // 4. return true
-        // hint:
-        // items[skuCount] = Item({
-        //  name: _name,
-        //  sku: skuCount,
-        //  price: _price,
-        //  state: State.ForSale,
-        //  seller: msg.sender,
-        //  buyer: address(0)
-        //});
-        //
-        //skuCount = skuCount + 1;
-        // emit LogForSale(skuCount);
-        // return true;
+        return true;
     }
 
     // Implement this buyItem function.
@@ -152,21 +157,55 @@ contract SupplyChain {
     //    - check the value after the function is called to make
     //      sure the buyer is refunded any excess ether sent.
     // 6. call the event associated with this function!
-    function buyItem(uint256 sku) public {}
+    function buyItem(uint256 _sku)
+        public
+        payable
+        forSale(_sku)
+        paidEnough(items[_sku].price)
+        checkValue(_sku)
+    {
+        Item storage item = items[_sku];
+
+        (bool success, ) = item.seller.call.value(item.price)("");
+        require(success);
+
+        item.buyer = msg.sender;
+        item.state = State.Sold;
+
+        emit LogSold(_sku);
+    }
 
     // 1. Add modifiers to check:
     //    - the item is sold already
     //    - the person calling this function is the seller.
     // 2. Change the state of the item to shipped.
     // 3. call the event associated with this function!
-    function shipItem(uint256 sku) public {}
+    function shipItem(uint256 _sku)
+        public
+        sold(_sku)
+        verifyCaller(items[_sku].seller)
+    {
+        Item storage item = items[_sku];
+        item.state = State.Shipped;
+
+        emit LogShipped(_sku);
+    }
 
     // 1. Add modifiers to check
     //    - the item is shipped already
     //    - the person calling this function is the buyer.
     // 2. Change the state of the item to received.
     // 3. Call the event associated with this function!
-    function receiveItem(uint256 sku) public {}
+    function receiveItem(uint256 _sku) public 
+    shipped(_sku)
+    verifyCaller(items[_sku].buyer)
+    {
+        Item storage item = items[_sku];
+        item.state = State.Received;
+
+        emit LogReceived(_sku);
+
+    }
 
     // Uncomment the following code block. it is needed to run tests
     function fetchItem(uint256 _sku)
@@ -177,8 +216,8 @@ contract SupplyChain {
             uint256 sku,
             uint256 price,
             uint256 state,
-            address seller,
-            address buyer
+            address payable seller,
+            address payable buyer
         )
     {
         name = items[_sku].name;
